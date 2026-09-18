@@ -13,6 +13,7 @@ Run from the extension directory:
 import base64
 import json
 import os
+import re
 import sys
 import types
 import unittest
@@ -551,6 +552,35 @@ class TestProviderRegistration(VeniceTestCase):
         for model in known:
             self.assertIn(f'<option value="{model}">', inx,
                           f'{model} is missing from the Model dropdown')
+
+    def test_provider_dropdown_matches_the_providers_table(self):
+        inx = self._read_inx()
+        options = re.findall(r'<option value="([^"]+)">', self._param_block(inx, 'provider'))
+
+        self.assertEqual(set(options), set(AIImageGenerator.PROVIDERS))
+
+    def test_every_dialog_param_has_an_argument(self):
+        """An .inx param with no add_argument makes the extension fail to launch."""
+        inx = self._read_inx()
+        params = set(re.findall(r'<param name="([^"]+)"', inx))
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'img_gen.py')
+        with open(path, encoding='utf-8') as handle:
+            arguments = set(re.findall(r'pars\.add_argument\(\s*"--([a-z_0-9]+)"',
+                                       handle.read()))
+
+        self.assertEqual(params - arguments, set())
+
+    @staticmethod
+    def _read_inx():
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'img_gen.inx')
+        with open(path, encoding='utf-8') as handle:
+            return handle.read()
+
+    @staticmethod
+    def _param_block(inx, name):
+        start = inx.index(f'<param name="{name}"')
+        return inx[start:inx.index('</param>', start)]
 
     def test_api_key_resolution_uses_the_venice_environment_variable(self):
         ext = make_extension()
