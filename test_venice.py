@@ -392,6 +392,77 @@ class TestVeniceEdit(VeniceTestCase):
         self.assertEqual(sent['data']['prompt'], 'add a rainbow. Avoid: cartoon')
         self.assertNotIn('negative_prompt', sent['data'])
 
+    def test_region_hint_is_added_for_a_partial_mask(self):
+        """Venice is not told where the mask is, so the region is named in words."""
+        ext = make_extension(model='firered-image-edit',
+                             edit_instruction='add a dwarf sitting',
+                             mask_mode='center')
+        sent = record_edit(ext)
+        ext.edit_venice(png_bytes(1024, 1024))
+
+        self.assertEqual(sent['data']['prompt'],
+                         'add a dwarf sitting, in the centre of the image')
+
+    def test_region_hint_matches_the_mask_mode(self):
+        for mask_mode, expected in AIImageGenerator.VENICE_MASK_HINTS.items():
+            with self.subTest(mask_mode=mask_mode):
+                ext = make_extension(model='firered-image-edit',
+                                     edit_instruction='add a bird',
+                                     mask_mode=mask_mode)
+                sent = record_edit(ext)
+                ext.edit_venice(png_bytes(1024, 1024))
+
+                self.assertEqual(sent['data']['prompt'], f'add a bird, {expected}')
+
+    def test_no_region_hint_for_a_full_frame_edit(self):
+        ext = make_extension(model='firered-image-edit',
+                             edit_instruction='make it snowy',
+                             mask_mode='full')
+        sent = record_edit(ext)
+        ext.edit_venice(png_bytes(1024, 1024))
+
+        self.assertEqual(sent['data']['prompt'], 'make it snowy')
+
+    def test_region_hint_does_not_double_the_punctuation(self):
+        ext = make_extension(model='firered-image-edit',
+                             edit_instruction='add a dwarf sitting.',
+                             mask_mode='center')
+        sent = record_edit(ext)
+        ext.edit_venice(png_bytes(1024, 1024))
+
+        self.assertNotIn('.,', sent['data']['prompt'])
+
+    def test_region_hint_combines_with_a_negative_prompt(self):
+        ext = make_extension(model='firered-image-edit',
+                             edit_instruction='add a dwarf sitting',
+                             negative_prompt='cartoon',
+                             mask_mode='center')
+        sent = record_edit(ext)
+        ext.edit_venice(png_bytes(1024, 1024))
+
+        self.assertEqual(sent['data']['prompt'],
+                         'add a dwarf sitting, in the centre of the image. Avoid: cartoon')
+
+    def test_shape_region_is_described_by_grid_position(self):
+        """Selected shapes get a position rather than a mask mode."""
+        ext = make_extension(model='firered-image-edit',
+                             edit_instruction='add a lamp',
+                             use_selection_as_mask=True)
+        ext.svg = SimpleNamespace(viewport_width=1000, viewport_height=1000,
+                                  selection=[])
+        shape = SimpleNamespace(
+            bounding_box=lambda: SimpleNamespace(center_x=100, center_y=900))
+        ext.get_selected_shapes_as_mask = lambda: [shape]
+
+        self.assertEqual(ext.add_venice_region_hint('add a lamp'),
+                         'add a lamp, in the bottom left area of the image')
+
+    def test_shape_region_falls_back_quietly(self):
+        ext = make_extension(model='firered-image-edit', use_selection_as_mask=True)
+        ext.get_selected_shapes_as_mask = lambda: [SimpleNamespace()]
+
+        self.assertEqual(ext.add_venice_region_hint('add a lamp'), 'add a lamp')
+
     def test_missing_instruction_is_rejected(self):
         ext = make_extension(edit_instruction='')
         sent = record_edit(ext)

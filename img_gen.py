@@ -103,6 +103,18 @@ class AIImageGenerator(inkex.EffectExtension):
     VENICE_DEFAULT_MODEL = 'venice-sd35'
     VENICE_DEFAULT_EDIT_MODEL = 'firered-image-edit'
     
+    # Venice has no mask channel, so the region is described in words instead.
+    # Without this the model composes for the whole frame and the local composite
+    # cuts whatever strays outside the mask.
+    VENICE_MASK_HINTS = {
+        'center': 'in the centre of the image',
+        'edges': 'around the outer edges of the image, leaving the centre unchanged',
+        'top_half': 'in the top half of the image',
+        'bottom_half': 'in the bottom half of the image',
+        'left_half': 'in the left half of the image',
+        'right_half': 'in the right half of the image'
+    }
+    
     # Aspect ratios accepted by every Venice model listed above
     VENICE_ASPECT_RATIOS = ('1:1', '3:2', '16:9', '21:9', '9:16', '2:3', '3:4', '4:5')
     
@@ -1288,11 +1300,64 @@ class AIImageGenerator(inkex.EffectExtension):
         if not self.check_venice_image(image_data):
             return None
         
-        edited_data = self.request_venice_edit(image_data, self.options.edit_instruction)
+        instruction = self.add_venice_region_hint(self.options.edit_instruction)
+        
+        edited_data = self.request_venice_edit(image_data, instruction)
         if not edited_data:
             return None
         
         return self.apply_venice_mask(image_data, edited_data)
+    
+    def add_venice_region_hint(self, instruction):
+        """Name the masked region in the instruction.
+        
+        Venice is never told where the edit belongs, so it composes for the whole
+        frame and the local composite then keeps only the masked part. Naming the
+        region in words keeps the subject inside it far more often.
+        """
+        if not instruction:
+            return instruction
+        
+        shapes = self.get_selected_shapes_as_mask()
+        
+        if shapes:
+            hint = self.describe_shapes_region(shapes)
+        else:
+            hint = self.VENICE_MASK_HINTS.get(self.options.mask_mode)
+        
+        if not hint:
+            return instruction
+        
+        return f"{instruction.rstrip().rstrip('.')}, {hint}"
+    
+    def describe_shapes_region(self, shapes):
+        """Describe where the selected shapes sit, as a position on a 3x3 grid."""
+        try:
+            boxes = [shape.bounding_box() for shape in shapes]
+            boxes = [box for box in boxes if box]
+            
+            width = self.svg.viewport_width
+            height = self.svg.viewport_height
+            
+            if not boxes or not width or not height:
+                return None
+            
+            center_x = sum(box.center_x for box in boxes) / len(boxes)
+            center_y = sum(box.center_y for box in boxes) / len(boxes)
+            
+            columns = ('left', 'centre', 'right')
+            rows = ('top', 'middle', 'bottom')
+            
+            column = columns[max(0, min(2, int(center_x / width * 3)))]
+            row = rows[max(0, min(2, int(center_y / height * 3)))]
+            
+            if column == 'centre' and row == 'middle':
+                return 'in the centre of the image'
+            
+            return f"in the {row} {column} area of the image"
+        
+        except Exception:
+            return None
     
     def img2img_venice(self, image_data):
         """Image-to-image using Venice (experimental)."""

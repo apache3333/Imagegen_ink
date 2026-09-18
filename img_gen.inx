@@ -178,7 +178,9 @@
             <param name="use_selection_as_mask" type="bool" gui-text="Use selected shapes as mask">false</param>
             <label>Select shapes along with the image to define edit region</label>
             <label>Venice: no mask channel - it regenerates the whole frame and the</label>
-            <label>masked region is composited back in locally (needs Pillow)</label>
+            <label>masked region is composited back in locally (needs Pillow). The</label>
+            <label>region is named in the instruction, e.g. "in the centre of the</label>
+            <label>image". Give the subject room or it will be clipped at the edge</label>
             <spacer/>
             
             <label appearance="header">Mask Refinement:</label>

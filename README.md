@@ -377,10 +377,24 @@ this extension applies masks **locally**:
 - **Any other mask mode, or "Use selected shapes as mask"** → Venice regenerates the whole
   frame, and the masked region is composited back over the original here, honouring
   **Feather radius** for the seam. Everything outside the mask is pixel-identical to the
-  original; inside it is a fresh generation, which may not line up perfectly at the edges.
-  This path needs **Pillow**, and says so if it is missing.
+  original; inside it is a fresh generation. This path needs **Pillow**, and says so if it
+  is missing.
 
 This is local compositing, not server-side inpainting.
+
+Because the API is never told where the mask is, the extension **names the region in the edit
+instruction** — `add a dwarf sitting` becomes `add a dwarf sitting, in the centre of the image`.
+Selected shapes are described by their position on a 3×3 grid instead. Without that hint the model
+composes for the whole frame and the composite clips whatever falls outside the mask, so a subject
+can come back cut in half.
+
+Two practical consequences:
+
+- **Give the subject room.** A mask region much smaller than the subject will still clip it. Widen
+  the mask, or use **Full image** and let Venice work with the entire frame.
+- **Mask region = "Full image" usually gives the best-looking result**, because nothing is clipped.
+  Use a partial mask when preserving the rest of the image exactly matters more than the edit
+  blending perfectly.
 
 **Sizing is mapped per model**
 
