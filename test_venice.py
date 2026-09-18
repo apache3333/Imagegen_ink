@@ -15,8 +15,10 @@ import json
 import os
 import re
 import sys
+import ssl
 import types
 import unittest
+import urllib.request
 from types import SimpleNamespace
 
 
@@ -602,6 +604,59 @@ class TestErrorExtraction(VeniceTestCase):
     def test_unknown_shape_falls_back(self):
         body = json.dumps({'error': {'code': 500}})
         self.assertEqual(self.ext.extract_api_error(body, 'fallback'), 'fallback')
+
+
+class TestUrlOpener(VeniceTestCase):
+    """get_url_opener was extracted from call_api, so both must still get it."""
+
+    @staticmethod
+    def _https_contexts(opener):
+        return [getattr(h, '_context', None) for h in opener.handlers
+                if isinstance(h, urllib.request.HTTPSHandler)]
+
+    @staticmethod
+    def _proxy_maps(opener):
+        return [h.proxies for h in opener.handlers
+                if isinstance(h, urllib.request.ProxyHandler)]
+
+    def test_certifi_context_is_attached(self):
+        """urllib builds its own default context, so check ours is the one used."""
+        ext = make_extension()
+        context = ssl.create_default_context()
+        ext.get_ssl_context = lambda: context
+
+        self.assertIn(context, self._https_contexts(ext.get_url_opener(use_ssl=True)))
+
+    def test_context_is_omitted_when_ssl_is_disabled(self):
+        """The local provider calls plain http and passes use_ssl=False."""
+        ext = make_extension()
+        context = ssl.create_default_context()
+        ext.get_ssl_context = lambda: context
+
+        self.assertNotIn(context, self._https_contexts(ext.get_url_opener(use_ssl=False)))
+
+    def test_proxy_is_applied_when_configured(self):
+        ext = make_extension(use_proxy=True, proxy_url='http://proxy.example:8080')
+        proxies = self._proxy_maps(ext.get_url_opener())
+
+        self.assertTrue(any(p.get('https') == 'http://proxy.example:8080'
+                            for p in proxies))
+        self.assertTrue(any(p.get('http') == 'http://proxy.example:8080'
+                            for p in proxies))
+
+    def test_proxy_is_absent_when_unconfigured(self):
+        ext = make_extension(use_proxy=False, proxy_url='http://proxy.example:8080')
+        proxies = self._proxy_maps(ext.get_url_opener())
+
+        self.assertFalse(any(p.get('https') == 'http://proxy.example:8080'
+                             for p in proxies))
+
+    def test_proxy_works_without_ssl_too(self):
+        ext = make_extension(use_proxy=True, proxy_url='http://proxy.example:8080')
+        proxies = self._proxy_maps(ext.get_url_opener(use_ssl=False))
+
+        self.assertTrue(any(p.get('https') == 'http://proxy.example:8080'
+                            for p in proxies))
 
 
 class TestPngSize(VeniceTestCase):
