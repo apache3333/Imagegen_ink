@@ -26,6 +26,7 @@
                 <option value="openai">OpenAI DALL-E</option>
                 <option value="stability">Stability AI (Stable Diffusion)</option>
                 <option value="replicate">Replicate (SDXL, Flux)</option>
+                <option value="venice">Venice AI (experimental)</option>
                 <option value="local">Local (Automatic1111/ComfyUI)</option>
             </param>
             <spacer/>
@@ -33,7 +34,8 @@
             <label appearance="header">API Configuration:</label>
             <param name="api_key" type="string" gui-text="API Key:">sk-...</param>
             <param name="use_env_key" type="bool" gui-text="Use environment variable instead">false</param>
-            <label>Environment variables: OPENAI_API_KEY, STABILITY_API_KEY, REPLICATE_API_TOKEN</label>
+            <label>Environment variables: OPENAI_API_KEY, STABILITY_API_KEY,</label>
+            <label>REPLICATE_API_TOKEN, VENICE_API_KEY</label>
             <spacer/>
             
             <param name="api_endpoint" type="string" gui-text="Custom endpoint (Local only):">http://127.0.0.1:7860/sdapi/v1/txt2img</param>
@@ -52,7 +54,8 @@
             
             <label appearance="header">Negative Prompt (what to avoid):</label>
             <param name="negative_prompt" type="string" appearance="multiline" gui-text="Negative prompt:">blurry, low quality, distorted, watermark</param>
-            <label>Supported by: Stability AI, Replicate, Local</label>
+            <label>Supported by: Stability AI, Replicate, Venice (generate), Local</label>
+            <label>Venice edits fold it into the prompt as "Avoid: ..."</label>
             <spacer/>
             
             <label appearance="header">Edit Instruction (for Edit mode):</label>
@@ -81,6 +84,15 @@
                 <option value="stability-ai/sdxl">SDXL (Replicate)</option>
                 <option value="black-forest-labs/flux-schnell">Flux Schnell (Replicate)</option>
                 <option value="black-forest-labs/flux-pro">Flux Pro (Replicate)</option>
+                <option value="venice-sd35">Venice SD3.5 (Venice)</option>
+                <option value="z-image-turbo">Z-Image Turbo (Venice, fastest)</option>
+                <option value="qwen-image-3">Qwen Image 3 (Venice)</option>
+                <option value="flux-2-pro">Flux 2 Pro (Venice)</option>
+                <option value="nano-banana-2">Nano Banana 2 (Venice)</option>
+                <option value="seedream-v5-lite">Seedream v5 Lite (Venice)</option>
+                <option value="firered-image-edit">FireRed Edit (Venice, edit/img2img)</option>
+                <option value="qwen-image-3-edit">Qwen Image 3 Edit (Venice, edit/img2img)</option>
+                <option value="nano-banana-2-edit">Nano Banana 2 Edit (Venice, edit/img2img)</option>
                 <option value="default">Default (Local)</option>
             </param>
             <spacer/>
@@ -159,6 +171,8 @@
             
             <param name="use_selection_as_mask" type="bool" gui-text="Use selected shapes as mask">false</param>
             <label>Select shapes along with the image to define edit region</label>
+            <label>Venice: no mask channel - it regenerates the whole frame and the</label>
+            <label>masked region is composited back in locally (needs Pillow)</label>
             <spacer/>
             
             <label appearance="header">Mask Refinement:</label>
@@ -227,6 +241,7 @@
             <label>• OpenAI: Best for general use, easy setup</label>
             <label>• Stability: Great quality, negative prompts</label>
             <label>• Replicate: Access to Flux, SDXL models</label>
+            <label>• Venice: Privacy focused, many models (experimental)</label>
             <label>• Local: Free, private, needs local setup</label>
             <spacer/>
             
@@ -241,6 +256,19 @@
             <label>OPENAI_API_KEY - OpenAI API key</label>
             <label>STABILITY_API_KEY - Stability AI key</label>
             <label>REPLICATE_API_TOKEN - Replicate token</label>
+            <label>VENICE_API_KEY - Venice AI key</label>
+            <spacer/>
+            
+            <label appearance="header">Venice AI (experimental):</label>
+            <label>• Modes: Generate, Edit, Img2Img. Variation is not supported</label>
+            <label>• Pick a "(Venice)" model to generate, or a Venice edit model</label>
+            <label>  for Edit and Img2Img - other choices fall back to a default</label>
+            <label>• No mask channel: partial masks are composited locally, so the</label>
+            <label>  edited region is a fresh generation rather than an inpaint</label>
+            <label>• Transformation strength is ignored (no API equivalent)</label>
+            <label>• Sizes are mapped to what each model accepts (max 1280px, or</label>
+            <label>  the nearest aspect ratio), so output size may differ</label>
+            <label>• Custom endpoint does not apply - Venice uses its own URL</label>
             <spacer/>
             
             <label appearance="header">Pricing (approximate):</label>
@@ -248,6 +276,7 @@
             <label>• DALL-E 3 HD: $0.08/image</label>
             <label>• DALL-E 2: $0.02/image</label>
             <label>• Stability/Replicate: varies by model</label>
+            <label>• Venice: ~$0.01-0.10/image, ~$0.04/edit (varies by model)</label>
             <label>• Local: Free (your hardware)</label>
         </page>
     </param>

@@ -9,7 +9,7 @@
 
 > **Generate and edit images using AI directly within Inkscape**
 
-A powerful Inkscape extension that integrates multiple AI image generation providers (OpenAI DALL-E, Stability AI, Replicate, and local models) to create, edit, and transform images without leaving your design workflow.
+A powerful Inkscape extension that integrates multiple AI image generation providers (OpenAI DALL-E, Stability AI, Replicate, Venice AI, and local models) to create, edit, and transform images without leaving your design workflow.
 
 </div>
 
@@ -52,6 +52,7 @@ A powerful Inkscape extension that integrates multiple AI image generation provi
   | **OpenAI DALL-E** | General use, easy setup | DALL-E 2, DALL-E 3, gpt-image-1 |
   | **Stability AI** | High quality, control | SDXL, negative prompts, seeds |
   | **Replicate** | Latest models | Flux, SDXL, community models |
+  | **Venice AI** ⚠️ *experimental* | Privacy, model choice | SD3.5, Qwen, Flux 2, Nano Banana, Seedream |
   | **Local** | Privacy, no API costs | Automatic1111, ComfyUI |
 
 - **🎨 Four Operation Modes**
@@ -106,6 +107,7 @@ A powerful Inkscape extension that integrates multiple AI image generation provi
 | OpenAI | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | Stability AI | [platform.stability.ai](https://platform.stability.ai/) |
 | Replicate | [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) |
+| Venice AI | [venice.ai/settings/api](https://venice.ai/settings/api) |
 | Local | No key needed |
 
 ---
@@ -238,6 +240,9 @@ Modify parts of an existing image using masks.
 
 **Or:** Select shapes to use as custom masks!
 
+> **Venice AI:** masks are applied locally rather than by the API — see
+> [Venice AI Setup](#venice-ai-setup-experimental).
+
 #### Variation Mode
 
 Create variations of an existing image.
@@ -247,11 +252,13 @@ Create variations of an existing image.
 3. Click Apply
 4. New similar image appears
 
+> **Venice AI** does not support this mode — use Img2Img instead.
+
 #### Img2Img Mode
 
 Transform an image based on a prompt while maintaining structure.
 
-**Key Setting:** `img2img_strength` (0-1)
+**Key Setting:** `img2img_strength` (0-1) — *ignored by Venice AI*
 - **0.3**: Subtle changes, keeps most details
 - **0.5**: Moderate transformation
 - **0.75**: Major changes, loose structure
@@ -286,6 +293,7 @@ export OPENAI_API_KEY="sk-your-key-here"
 | OpenAI | `OPENAI_API_KEY` |
 | Stability AI | `STABILITY_API_KEY` |
 | Replicate | `REPLICATE_API_TOKEN` |
+| Venice AI | `VENICE_API_KEY` |
 
 #### 3. Config File (Persistent)
 
@@ -296,6 +304,7 @@ Edit `.ai_image_config.json` in the extension directory:
     "openai_api_key": "sk-your-openai-key",
     "stability_api_key": "sk-your-stability-key",
     "replicate_api_key": "r8_your-replicate-token",
+    "venice_api_key": "your-venice-api-key",
     "default_provider": "openai",
     "default_model": "dall-e-3",
     "default_size": "1024x1024",
@@ -319,27 +328,98 @@ For Automatic1111 or ComfyUI:
 2. Select **Provider**: Local
 3. Optionally set **Custom Endpoint** if using non-default port
 
+### Venice AI Setup (Experimental)
+
+1. Get a key at [venice.ai/settings/api](https://venice.ai/settings/api)
+2. Select **Provider**: Venice AI
+3. Provide the key in the API Key field, via `VENICE_API_KEY`, or as
+   `venice_api_key` in the config file
+4. On the **Model** tab pick a model marked `(Venice)`
+
+> ⚠️ **Experimental.** Venice's own documentation describes its image edit endpoints as
+> experimental and subject to change. The **Custom endpoint** field does not apply to
+> Venice — it is Local-only.
+
+**Supported modes**
+
+| Mode | Venice | Notes |
+|------|--------|-------|
+| Generate | ✅ | `POST /image/generate` — honours negative prompt, seed, CFG scale and steps |
+| Edit | ✅ | `POST /image/edit` — prompt-based, see masking below |
+| Img2Img | ✅ | `POST /image/edit` — **Transformation strength is ignored** (no API equivalent) |
+| Variation | ❌ | Venice has no variation endpoint; use Img2Img with a prompt instead |
+
+**Models**
+
+| Model | Sizing | Notes |
+|-------|--------|-------|
+| `venice-sd35` | width/height | Default. SD 3.5, up to 30 steps |
+| `z-image-turbo` | width/height | Fastest, fixed at 8 steps |
+| `qwen-image-3` | aspect ratio | Strong general purpose model |
+| `flux-2-pro` | aspect ratio | Flux 2 |
+| `nano-banana-2` | aspect ratio | Long prompts (32k characters) |
+| `seedream-v5-lite` | aspect ratio | Inexpensive |
+| `firered-image-edit` | — | Default for Edit and Img2Img |
+| `qwen-image-3-edit` | — | Edit and Img2Img |
+| `nano-banana-2-edit` | — | Edit and Img2Img, long prompts |
+
+Selecting a non-Venice model while Venice is the provider falls back to a Venice default
+and says so, rather than failing.
+
+**Masking works differently on Venice**
+
+Venice has **no mask channel** — its API rewrites the whole frame, and its documentation is
+explicit that additional images act as whole-image references rather than region maps. So
+this extension applies masks **locally**:
+
+- **Mask region = "Full image"** → the Venice result is used as-is.
+- **Any other mask mode, or "Use selected shapes as mask"** → Venice regenerates the whole
+  frame, and the masked region is composited back over the original here, honouring
+  **Feather radius** for the seam. Everything outside the mask is pixel-identical to the
+  original; inside it is a fresh generation, which may not line up perfectly at the edges.
+  This path needs **Pillow**, and says so if it is missing.
+
+This is local compositing, not server-side inpainting.
+
+**Sizing is mapped per model**
+
+Venice models fall into two families, so the Size dropdown is translated rather than passed
+through, and the output size may differ from what was requested:
+
+- **Pixel-based models** (`venice-sd35`, `z-image-turbo`) take width and height, capped at
+  **1280px** per side and rounded to the model's step. `1792x1024` becomes `1280x736`.
+- **Aspect-ratio models** (everything else) reject explicit dimensions, so the closest
+  supported aspect ratio is sent instead. The placement box is then matched to the image
+  that comes back, so it is not stretched.
+
+Sampling steps and seeds are clamped to each model's accepted range, with a note when that
+happens. Negative prompts use Venice's real `negative_prompt` field when generating; the
+edit endpoint has no such field, so a negative prompt is appended to the instruction as
+`. Avoid: ...` instead. Venice's own defaults for watermarking and safe mode are left
+untouched.
+
 ---
 
 ## 🔄 Provider Comparison
 
-| Feature | OpenAI | Stability AI | Replicate | Local |
-|---------|--------|--------------|-----------|-------|
-| **Setup Difficulty** | Easy | Easy | Medium | Hard |
-| **Cost** | ~$0.04/image | ~$0.01/image | Varies | Free |
-| **Negative Prompts** | Limited | ✅ Full | ✅ Full | ✅ Full |
-| **Seed Control** | ❌ | ✅ | ✅ | ✅ |
-| **Custom Sizes** | Limited | ✅ | ✅ | ✅ |
-| **Edit/Inpaint** | ✅ | ✅ | ❌ | ✅ |
-| **Variations** | ✅ | Via img2img | Via img2img | Via img2img |
-| **Best Models** | DALL-E 3 | SDXL | Flux Pro | Any |
-| **Privacy** | Cloud | Cloud | Cloud | Local |
+| Feature | OpenAI | Stability AI | Replicate | Venice AI | Local |
+|---------|--------|--------------|-----------|-----------|-------|
+| **Setup Difficulty** | Easy | Easy | Medium | Easy | Hard |
+| **Cost** | ~$0.04/image | ~$0.01/image | Varies | ~$0.01-0.10/image | Free |
+| **Negative Prompts** | Limited | ✅ Full | ✅ Full | ✅ Full (generate) | ✅ Full |
+| **Seed Control** | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Custom Sizes** | Limited | ✅ | ✅ | Mapped per model | ✅ |
+| **Edit/Inpaint** | ✅ | ✅ | ❌ | Prompt-based, no mask channel | ✅ |
+| **Variations** | ✅ | Via img2img | Via img2img | ❌ Use img2img | Via img2img |
+| **Best Models** | DALL-E 3 | SDXL | Flux Pro | Qwen Image 3, Nano Banana 2 | Any |
+| **Privacy** | Cloud | Cloud | Cloud | Cloud (not retained) | Local |
 
 ### Recommended Use Cases
 
 - **OpenAI**: Quick prototypes, general imagery, beginners
 - **Stability AI**: Detailed control, specific styles, production work
 - **Replicate**: Access to Flux, experimental models
+- **Venice AI**: Wide model choice behind one key, privacy-conscious cloud use
 - **Local**: Privacy-sensitive, high volume, custom models
 
 ---

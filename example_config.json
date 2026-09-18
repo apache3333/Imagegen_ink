@@ -2,6 +2,7 @@
     "openai_api_key": "sk-proj-skopenai-api-key-here",
     "stability_api_key": "sk-your-stability-api-key-here",
     "replicate_api_key": "r8_your-replicate-token-here",
+    "venice_api_key": "your-venice-api-key-here",
     "default_provider": "openai",
     "default_model": "dall-e-3",
     "default_size": "1024x1024",

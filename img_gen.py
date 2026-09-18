@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Inkscape extension to generate and edit images using AI providers.
-Supports OpenAI DALL-E, Stability AI, Replicate, and local models.
+Supports OpenAI DALL-E, Stability AI, Replicate, Venice AI, and local models.
 """
 
 import inkex
@@ -57,6 +57,18 @@ class AIImageGenerator(inkex.EffectExtension):
             'models': ['stability-ai/sdxl', 'black-forest-labs/flux-schnell', 'black-forest-labs/flux-pro'],
             'sizes': ['1024x1024', '1024x768', '768x1024', '512x512']
         },
+        'venice': {
+            'name': 'Venice AI (experimental)',
+            'generate_url': 'https://api.venice.ai/api/v1/image/generate',
+            'edit_url': 'https://api.venice.ai/api/v1/image/edit',
+            'img2img_url': 'https://api.venice.ai/api/v1/image/edit',
+            'multi_edit_url': 'https://api.venice.ai/api/v1/image/multi-edit',
+            'env_key': 'VENICE_API_KEY',
+            'config_key': 'venice_api_key',
+            'models': ['venice-sd35', 'z-image-turbo', 'qwen-image-3', 'flux-2-pro',
+                       'nano-banana-2', 'seedream-v5-lite'],
+            'sizes': ['1024x1024', '1280x720', '720x1280', '1024x768', '768x1024', '512x512']
+        },
         'local': {
             'name': 'Local (Automatic1111/ComfyUI)',
             'generate_url': 'http://127.0.0.1:7860/sdapi/v1/txt2img',
@@ -67,6 +79,40 @@ class AIImageGenerator(inkex.EffectExtension):
             'sizes': ['1024x1024', '768x768', '512x512', '768x512', '512x768']
         }
     }
+    
+    # Venice generation models.
+    # 'sizing' is 'px' for models that take width/height (widthHeightDivisor applies)
+    # and 'ar' for models that require aspect_ratio and reject width/height.
+    # Limits mirror GET https://api.venice.ai/api/v1/models?type=image
+    VENICE_MODELS = {
+        'venice-sd35': {'sizing': 'px', 'divisor': 16, 'max_steps': 30, 'prompt_limit': 1500},
+        'z-image-turbo': {'sizing': 'px', 'divisor': 8, 'max_steps': 8, 'prompt_limit': 7500},
+        'qwen-image-3': {'sizing': 'ar', 'max_steps': 50, 'prompt_limit': 10000},
+        'flux-2-pro': {'sizing': 'ar', 'max_steps': 50, 'prompt_limit': 3000},
+        'nano-banana-2': {'sizing': 'ar', 'max_steps': 50, 'prompt_limit': 32768},
+        'seedream-v5-lite': {'sizing': 'ar', 'max_steps': 50, 'prompt_limit': 10000}
+    }
+    
+    # Venice edit models (GET /models?type=inpaint). Used by edit and img2img.
+    VENICE_EDIT_MODELS = {
+        'firered-image-edit': {'prompt_limit': 1500},
+        'qwen-image-3-edit': {'prompt_limit': 10000},
+        'nano-banana-2-edit': {'prompt_limit': 32768}
+    }
+    
+    VENICE_DEFAULT_MODEL = 'venice-sd35'
+    VENICE_DEFAULT_EDIT_MODEL = 'firered-image-edit'
+    
+    # Aspect ratios accepted by every Venice model listed above
+    VENICE_ASPECT_RATIOS = ('1:1', '3:2', '16:9', '21:9', '9:16', '2:3', '3:4', '4:5')
+    
+    # Venice API limits
+    VENICE_MAX_DIMENSION = 1280
+    VENICE_MAX_NEGATIVE_PROMPT = 7500
+    VENICE_SEED_LIMIT = 999999999
+    VENICE_MIN_IMAGE_PIXELS = 65536
+    VENICE_MAX_IMAGE_PIXELS = 33177600
+    VENICE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
     
     # Preset configurations
     PRESETS = {
@@ -188,6 +234,7 @@ class AIImageGenerator(inkex.EffectExtension):
             'openai_api_key': '',
             'stability_api_key': '',
             'replicate_api_key': '',
+            'venice_api_key': '',
             'default_provider': 'openai',
             'default_model': 'dall-e-3',
             'default_size': '1024x1024',
@@ -367,6 +414,15 @@ class AIImageGenerator(inkex.EffectExtension):
             if self.options.provider == 'openai' and default_model.startswith('dall-e'):
                 self.options.model = default_model
         
+        # A Venice run still carrying the model dropdown's OpenAI default gets a
+        # Venice model instead, so the Model tab does not have to be touched first
+        if self.options.provider == 'venice' and self.options.model == 'dall-e-3':
+            default_model = self.get_config_value('default_model', self.VENICE_DEFAULT_MODEL)
+            if default_model in self.VENICE_MODELS or default_model in self.VENICE_EDIT_MODELS:
+                self.options.model = default_model
+            else:
+                self.options.model = self.VENICE_DEFAULT_MODEL
+        
         # Use config defaults for size
         if self.options.image_size == '1024x1024':
             self.options.image_size = self.get_config_value('default_size', '1024x1024')
@@ -501,6 +557,8 @@ class AIImageGenerator(inkex.EffectExtension):
             return self.generate_stability()
         elif provider == 'replicate':
             return self.generate_replicate()
+        elif provider == 'venice':
+            return self.generate_venice()
         elif provider == 'local':
             return self.generate_local()
         else:
@@ -689,6 +747,206 @@ class AIImageGenerator(inkex.EffectExtension):
             return base64.b64decode(result['images'][0])
         return None
     
+    def generate_venice(self):
+        """Generate image using Venice AI (experimental)."""
+        url = self.PROVIDERS['venice']['generate_url']
+        model = self.get_venice_model()
+        
+        if not self.check_venice_prompt(self.options.prompt, model, self.VENICE_MODELS):
+            return None
+        
+        if not self.check_venice_negative_prompt():
+            return None
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self._api_key}'
+        }
+        
+        data = {
+            'model': model,
+            'prompt': self.options.prompt,
+            'format': 'png',
+            'cfg_scale': self.options.cfg_scale,
+            'steps': self.get_venice_steps(model)
+        }
+        
+        # Venice takes a real negative prompt, so no folding into the prompt text
+        if self.options.negative_prompt:
+            data['negative_prompt'] = self.options.negative_prompt
+        
+        seed = self.get_venice_seed()
+        if seed is not None:
+            data['seed'] = seed
+        
+        data.update(self.get_venice_size(model))
+        
+        result = self.call_api(url, headers, data)
+        if result and 'images' in result and len(result['images']) > 0:
+            image_data = base64.b64decode(result['images'][0])
+            self.sync_placement_size(image_data)
+            return image_data
+        return None
+    
+    def get_venice_model(self):
+        """Resolve the selected model to a Venice generation model."""
+        model = self.options.model
+        
+        if model in self.VENICE_MODELS:
+            return model
+        
+        inkex.errormsg(
+            f"Note: '{model}' is not a Venice generation model, "
+            f"so '{self.VENICE_DEFAULT_MODEL}' was used instead.\n"
+            f"Venice models in the Model list: {', '.join(self.VENICE_MODELS)}"
+        )
+        return self.VENICE_DEFAULT_MODEL
+    
+    def get_venice_edit_model(self):
+        """Resolve the selected model to a Venice edit model."""
+        model = self.options.model
+        
+        if model in self.VENICE_EDIT_MODELS:
+            return model
+        
+        inkex.errormsg(
+            f"Note: '{model}' cannot edit images, "
+            f"so '{self.VENICE_DEFAULT_EDIT_MODEL}' was used instead.\n"
+            f"Venice edit models in the Model list: {', '.join(self.VENICE_EDIT_MODELS)}"
+        )
+        return self.VENICE_DEFAULT_EDIT_MODEL
+    
+    def check_venice_prompt(self, prompt, model, models):
+        """Check a prompt against the Venice model's character limit."""
+        if not prompt:
+            return True
+        
+        limit = models.get(model, {}).get('prompt_limit', 1500)
+        if len(prompt) > limit:
+            inkex.errormsg(
+                f"Prompt is {len(prompt)} characters but Venice model '{model}' "
+                f"accepts at most {limit}. Shorten the prompt or pick another model."
+            )
+            return False
+        return True
+    
+    def check_venice_negative_prompt(self):
+        """Check the negative prompt against Venice's limit."""
+        if len(self.options.negative_prompt or '') > self.VENICE_MAX_NEGATIVE_PROMPT:
+            inkex.errormsg(
+                f"Negative prompt is longer than Venice's "
+                f"{self.VENICE_MAX_NEGATIVE_PROMPT} character limit."
+            )
+            return False
+        return True
+    
+    def get_venice_steps(self, model):
+        """Clamp sampling steps to what the Venice model accepts."""
+        max_steps = self.VENICE_MODELS.get(model, {}).get('max_steps', 30)
+        
+        if self.options.steps > max_steps:
+            inkex.errormsg(
+                f"Note: Venice model '{model}' accepts at most {max_steps} sampling "
+                f"steps, so {self.options.steps} was reduced to {max_steps}."
+            )
+            return max_steps
+        return self.options.steps
+    
+    def get_venice_seed(self):
+        """Get the seed in Venice's accepted range, or None for a random seed."""
+        if self.options.seed == -1:
+            return None
+        
+        if abs(self.options.seed) > self.VENICE_SEED_LIMIT:
+            inkex.errormsg(
+                f"Note: Venice seeds range from -{self.VENICE_SEED_LIMIT} to "
+                f"{self.VENICE_SEED_LIMIT}, so {self.options.seed} was clamped."
+            )
+            return max(-self.VENICE_SEED_LIMIT,
+                       min(self.VENICE_SEED_LIMIT, self.options.seed))
+        return self.options.seed
+    
+    def get_venice_size(self, model):
+        """Build the size fields for a Venice model.
+        
+        Venice image models come in two families: pixel based models take width and
+        height, while the rest reject them and take an aspect_ratio instead.
+        """
+        if self.VENICE_MODELS.get(model, {}).get('sizing') == 'px':
+            divisor = self.VENICE_MODELS[model].get('divisor', 8)
+            width, height = self.get_venice_pixel_size(divisor)
+            return {'width': width, 'height': height}
+        
+        return {'aspect_ratio': self.get_venice_aspect_ratio()}
+    
+    def get_venice_pixel_size(self, divisor):
+        """Fit the selected size into Venice's pixel limits for the model."""
+        width, height = self.parse_image_size()
+        
+        # Scale down together so the requested proportions survive the cap
+        largest = max(width, height)
+        if largest > self.VENICE_MAX_DIMENSION:
+            scale = self.VENICE_MAX_DIMENSION / largest
+            width = int(width * scale)
+            height = int(height * scale)
+        
+        return (self.align_to_divisor(width, divisor),
+                self.align_to_divisor(height, divisor))
+    
+    def align_to_divisor(self, value, divisor):
+        """Round a dimension to the nearest multiple the model accepts."""
+        aligned = int(round(value / divisor)) * divisor
+        return max(divisor, min(self.VENICE_MAX_DIMENSION, aligned))
+    
+    def get_venice_aspect_ratio(self):
+        """Pick the supported aspect ratio closest to the selected size."""
+        width, height = self.parse_image_size()
+        target = width / height
+        
+        best = self.VENICE_ASPECT_RATIOS[0]
+        best_distance = None
+        
+        for ratio in self.VENICE_ASPECT_RATIOS:
+            ratio_width, ratio_height = map(int, ratio.split(':'))
+            distance = abs(ratio_width / ratio_height - target)
+            if best_distance is None or distance < best_distance:
+                best = ratio
+                best_distance = distance
+        
+        return best
+    
+    def parse_image_size(self):
+        """Parse the selected size string, falling back to a square."""
+        try:
+            width, height = map(int, self.get_image_size().split('x'))
+            if width > 0 and height > 0:
+                return width, height
+        except (ValueError, AttributeError):
+            pass
+        return 1024, 1024
+    
+    def get_png_size(self, image_data):
+        """Read a PNG's dimensions from its IHDR chunk, without Pillow."""
+        if len(image_data) < 24 or image_data[:8] != b'\x89PNG\r\n\x1a\n':
+            return None
+        
+        return (int.from_bytes(image_data[16:20], 'big'),
+                int.from_bytes(image_data[20:24], 'big'))
+    
+    def sync_placement_size(self, image_data):
+        """Match the placement size to the image that actually came back.
+        
+        Venice models that take an aspect_ratio rather than exact pixels can answer
+        with different dimensions than the Size dropdown asked for. Without this the
+        image would be stretched into the requested box.
+        """
+        size = self.get_png_size(image_data)
+        if not size or size == self.parse_image_size():
+            return
+        
+        self.options.use_custom_size = True
+        self.options.custom_width, self.options.custom_height = size
+    
     def build_prompt(self):
         """Build full prompt with any modifications."""
         prompt = self.options.prompt
@@ -848,6 +1106,12 @@ class AIImageGenerator(inkex.EffectExtension):
         if not image_data:
             inkex.errormsg("Could not load image data for editing.")
             return None
+        
+        # Venice keeps the original framing. It has no mask channel and infers the
+        # output aspect ratio from the input image, so the transparent square padding
+        # added for DALL-E would be baked into the result.
+        if self.options.provider == 'venice':
+            return self.edit_venice(image_data)
         
         image_data = self.convert_image_to_rgba(image_data)
         if not image_data:
@@ -1009,6 +1273,210 @@ class AIImageGenerator(inkex.EffectExtension):
             return base64.b64decode(result['images'][0])
         return None
     
+    def edit_venice(self, image_data):
+        """Edit image using Venice (experimental).
+        
+        Venice has no mask channel - its edit endpoint rewrites the whole frame. When
+        a partial mask is selected, the returned frame is composited back over the
+        original through that mask locally, so only the masked region changes.
+        """
+        if not self.check_venice_image(image_data):
+            return None
+        
+        edited_data = self.request_venice_edit(image_data, self.options.edit_instruction)
+        if not edited_data:
+            return None
+        
+        return self.apply_venice_mask(image_data, edited_data)
+    
+    def img2img_venice(self, image_data):
+        """Image-to-image using Venice (experimental)."""
+        if not self.check_venice_image(image_data):
+            return None
+        
+        # Only mention the ignored control when the user actually changed it
+        if abs(self.options.img2img_strength - 0.75) > 0.001:
+            inkex.errormsg(
+                "Note: Venice's edit endpoint has no transformation strength "
+                "parameter, so 'Transformation strength' was ignored."
+            )
+        
+        result = self.request_venice_edit(image_data, self.options.prompt)
+        if result:
+            # img2img places a new image, so the box has to match what came back
+            self.sync_placement_size(result)
+        return result
+    
+    def request_venice_edit(self, image_data, prompt):
+        """Send an image and prompt to Venice, returning raw image bytes."""
+        url = self.PROVIDERS['venice']['edit_url']
+        model = self.get_venice_edit_model()
+        
+        if not prompt or len(prompt.strip()) < 3:
+            inkex.errormsg("Please provide instructions describing the edit.")
+            return None
+        
+        # The edit endpoint has no negative_prompt field, so hint in the prompt
+        # instead - the same approach build_prompt() takes for DALL-E
+        if self.options.negative_prompt:
+            prompt += f". Avoid: {self.options.negative_prompt}"
+        
+        if not self.check_venice_prompt(prompt, model, self.VENICE_EDIT_MODELS):
+            return None
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self._api_key}',
+            'Accept': 'image/png'
+        }
+        
+        # aspect_ratio is left out so Venice infers it from the input image
+        data = {
+            'model': model,
+            'prompt': prompt,
+            'image': base64.b64encode(image_data).decode('utf-8'),
+            'output_format': 'png'
+        }
+        
+        return self.call_api_binary(url, headers, data)
+    
+    def check_venice_image(self, image_data):
+        """Check an input image against Venice's edit endpoint limits."""
+        if len(image_data) >= self.VENICE_MAX_IMAGE_BYTES:
+            inkex.errormsg(
+                f"Image is {len(image_data) // (1024 * 1024)} MB. Venice accepts "
+                f"images below 25 MB - scale the image down and try again."
+            )
+            return False
+        
+        try:
+            from PIL import Image as PILImage
+            width, height = PILImage.open(BytesIO(image_data)).size
+        except Exception:
+            # Pillow is optional here; let the API do the validating
+            return True
+        
+        pixels = width * height
+        
+        if pixels < self.VENICE_MIN_IMAGE_PIXELS:
+            inkex.errormsg(
+                f"Image is {width}x{height}. Venice needs at least "
+                f"{self.VENICE_MIN_IMAGE_PIXELS} pixels (256x256)."
+            )
+            return False
+        
+        if pixels > self.VENICE_MAX_IMAGE_PIXELS:
+            inkex.errormsg(
+                f"Image is {width}x{height}. Venice accepts at most "
+                f"{self.VENICE_MAX_IMAGE_PIXELS} pixels."
+            )
+            return False
+        
+        return True
+    
+    def get_image_dimensions(self, image_data):
+        """Get an image's pixel size, preferring the PNG header over Pillow."""
+        size = self.get_png_size(image_data)
+        if size:
+            return size
+        
+        try:
+            from PIL import Image as PILImage
+            return PILImage.open(BytesIO(image_data)).size
+        except Exception:
+            return None
+    
+    def fit_to_original(self, original_data, edited_data):
+        """Scale a Venice result back to the dimensions of the image it replaces.
+        
+        Venice answers at its own resolution tier and inferred aspect ratio, so the
+        result can differ from the source. The SVG element keeps its geometry, so a
+        mismatch would show up as a stretched image.
+        """
+        original_size = self.get_image_dimensions(original_data)
+        edited_size = self.get_image_dimensions(edited_data)
+        
+        if not original_size or not edited_size or original_size == edited_size:
+            return edited_data
+        
+        try:
+            from PIL import Image as PILImage
+        except ImportError:
+            inkex.errormsg(
+                f"Note: Venice returned {edited_size[0]}x{edited_size[1]} for a "
+                f"{original_size[0]}x{original_size[1]} image, so it will be stretched "
+                f"to fit. Install Pillow (pip install Pillow) to rescale it properly."
+            )
+            return edited_data
+        
+        try:
+            image = PILImage.open(BytesIO(edited_data)).convert('RGBA')
+            image = image.resize(original_size, PILImage.Resampling.LANCZOS)
+            
+            output = BytesIO()
+            image.save(output, format='PNG')
+            return output.getvalue()
+        except Exception as e:
+            inkex.errormsg(f"Error rescaling Venice edit: {str(e)}")
+            return edited_data
+    
+    def apply_venice_mask(self, original_data, edited_data):
+        """Composite a Venice edit back over the original through the local mask.
+        
+        Venice regenerates the whole frame, so this keeps the original everywhere the
+        mask is opaque and the edit everywhere it is clear. This is local compositing,
+        not server side inpainting - the edited region is a fresh generation.
+        """
+        shapes = self.get_selected_shapes_as_mask()
+        
+        # Nothing to composite when the whole frame was meant to be replaced
+        if not shapes and self.options.mask_mode == 'full':
+            return self.fit_to_original(original_data, edited_data)
+        
+        try:
+            from PIL import Image as PILImage
+        except ImportError:
+            inkex.errormsg(
+                "Venice has no mask channel, so partial masks are applied locally "
+                "with Pillow, which is not installed.\n\n"
+                "Install it with: pip install Pillow\n"
+                "Or set Mask region to 'Full image (regenerate all)'."
+            )
+            return None
+        
+        try:
+            original = PILImage.open(BytesIO(original_data)).convert('RGBA')
+            edited = PILImage.open(BytesIO(edited_data)).convert('RGBA')
+            
+            # Venice may answer at a different resolution tier than the input
+            if edited.size != original.size:
+                edited = edited.resize(original.size, PILImage.Resampling.LANCZOS)
+            
+            if shapes:
+                mask_data = self.create_mask_from_shapes(original_data, shapes)
+            else:
+                mask_data = self.create_mask(original_data, self.options.mask_mode)
+            
+            if not mask_data:
+                return None
+            
+            mask = PILImage.open(BytesIO(mask_data)).convert('RGBA')
+            if mask.size != original.size:
+                mask = mask.resize(original.size, PILImage.Resampling.LANCZOS)
+            
+            # Alpha 0 marks the region to regenerate, so the alpha band selects
+            # the original where it is opaque and the edit where it is clear
+            keep_original = mask.split()[3]
+            composite = PILImage.composite(original, edited, keep_original)
+            
+            output = BytesIO()
+            composite.save(output, format='PNG')
+            return output.getvalue()
+        
+        except Exception as e:
+            inkex.errormsg(f"Error compositing Venice edit: {str(e)}")
+            return None
+    
     # ==================== Image-to-Image ====================
     
     def img2img(self, selected_image):
@@ -1017,6 +1485,10 @@ class AIImageGenerator(inkex.EffectExtension):
         if not image_data:
             inkex.errormsg("Could not load image data.")
             return None
+        
+        # Venice infers the aspect ratio from the input image - see edit_image()
+        if self.options.provider == 'venice':
+            return self.img2img_venice(image_data)
         
         image_data = self.convert_image_to_rgba(image_data)
         if not image_data:
@@ -1136,6 +1608,14 @@ class AIImageGenerator(inkex.EffectExtension):
     
     def create_variation(self, selected_image):
         """Create variation of existing image."""
+        if self.options.provider == 'venice':
+            inkex.errormsg(
+                "Venice does not provide an image variation endpoint.\n\n"
+                "Use the 'Image-to-image transformation' mode instead, with a prompt "
+                "describing the variation you want."
+            )
+            return None
+        
         image_data = self.get_image_data(selected_image['href'])
         if not image_data:
             inkex.errormsg("Could not load image data for variation.")
@@ -1220,15 +1700,8 @@ class AIImageGenerator(inkex.EffectExtension):
         except:
             return ssl.create_default_context()
     
-    def call_api(self, url, headers, data, use_ssl=True):
-        """Call API with JSON data and retry logic."""
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode('utf-8'),
-            headers=headers,
-            method='POST'
-        )
-        
+    def get_url_opener(self, use_ssl=True):
+        """Build a URL opener with the configured proxy and SSL context."""
         context = self.get_ssl_context() if use_ssl else None
         
         # Setup proxy if configured
@@ -1239,15 +1712,57 @@ class AIImageGenerator(inkex.EffectExtension):
             })
             if context:
                 https_handler = urllib.request.HTTPSHandler(context=context)
-                opener = urllib.request.build_opener(proxy_handler, https_handler)
-            else:
-                opener = urllib.request.build_opener(proxy_handler)
-        else:
-            if context:
-                https_handler = urllib.request.HTTPSHandler(context=context)
-                opener = urllib.request.build_opener(https_handler)
-            else:
-                opener = urllib.request.build_opener()
+                return urllib.request.build_opener(proxy_handler, https_handler)
+            return urllib.request.build_opener(proxy_handler)
+        
+        if context:
+            https_handler = urllib.request.HTTPSHandler(context=context)
+            return urllib.request.build_opener(https_handler)
+        
+        return urllib.request.build_opener()
+    
+    def extract_api_error(self, error_body, fallback):
+        """Get a readable message out of a provider error response.
+        
+        Handles the OpenAI shape ({"error": {"message": ...}}) and the Venice shape
+        ({"error": "...", "details": {...}}), falling back to the raw error.
+        """
+        try:
+            if isinstance(error_body, bytes):
+                error_body = error_body.decode('utf-8', 'replace')
+            error_data = json.loads(error_body)
+        except Exception:
+            return fallback
+        
+        if not isinstance(error_data, dict):
+            return fallback
+        
+        error = error_data.get('error')
+        
+        if isinstance(error, dict):
+            return error.get('message', fallback)
+        
+        if isinstance(error, str) and error:
+            details = error_data.get('details')
+            if details:
+                return f"{error} ({json.dumps(details)})"
+            return error
+        
+        if isinstance(error_data.get('message'), str):
+            return error_data['message']
+        
+        return fallback
+    
+    def call_api(self, url, headers, data, use_ssl=True):
+        """Call API with JSON data and retry logic."""
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode('utf-8'),
+            headers=headers,
+            method='POST'
+        )
+        
+        opener = self.get_url_opener(use_ssl)
         
         # Retry logic with exponential backoff
         max_retries = 3
@@ -1257,12 +1772,7 @@ class AIImageGenerator(inkex.EffectExtension):
                     return json.loads(response.read().decode('utf-8'))
             
             except urllib.error.HTTPError as e:
-                error_body = e.read().decode('utf-8')
-                try:
-                    error_data = json.loads(error_body)
-                    error_message = error_data.get('error', {}).get('message', str(e))
-                except:
-                    error_message = str(e)
+                error_message = self.extract_api_error(e.read(), str(e))
                 
                 # Check if retryable
                 if e.code in [429, 500, 502, 503, 504] and attempt < max_retries - 1:
@@ -1316,12 +1826,7 @@ class AIImageGenerator(inkex.EffectExtension):
                     return json.loads(response.read().decode('utf-8'))
             
             except urllib.error.HTTPError as e:
-                error_body = e.read().decode('utf-8')
-                try:
-                    error_data = json.loads(error_body)
-                    error_message = error_data.get('error', {}).get('message', str(e))
-                except:
-                    error_message = str(e)
+                error_message = self.extract_api_error(e.read(), str(e))
                 
                 if e.code in [429, 500, 502, 503, 504] and attempt < max_retries - 1:
                     wait_time = (2 ** attempt) * 2
@@ -1335,6 +1840,71 @@ class AIImageGenerator(inkex.EffectExtension):
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                     continue
+                inkex.errormsg(f"Error: {str(e)}")
+                return None
+        
+        return None
+    
+    def call_api_binary(self, url, headers, data):
+        """Call API with JSON data and return raw image bytes.
+        
+        Venice's edit endpoints answer with image/png rather than JSON.
+        """
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode('utf-8'),
+            headers=headers,
+            method='POST'
+        )
+        
+        opener = self.get_url_opener()
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with opener.open(req, timeout=180) as response:
+                    content_type = response.headers.get('Content-Type', '')
+                    body = response.read()
+                    
+                    # An image was expected, so a JSON body carries an error
+                    if 'application/json' in content_type:
+                        inkex.errormsg(
+                            f"API Error: "
+                            f"{self.extract_api_error(body, 'unexpected JSON response')}"
+                        )
+                        return None
+                    
+                    if response.headers.get('x-venice-is-content-violation') == 'true':
+                        inkex.errormsg(
+                            "Venice rejected this request under its content policy."
+                        )
+                        return None
+                    
+                    warning = response.headers.get('x-venice-model-deprecation-warning')
+                    if warning:
+                        inkex.errormsg(f"Venice model warning: {warning}")
+                    
+                    return body
+            
+            except urllib.error.HTTPError as e:
+                error_message = self.extract_api_error(e.read(), str(e))
+                
+                if e.code in [429, 500, 502, 503, 504] and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 2
+                    time.sleep(wait_time)
+                    continue
+                
+                inkex.errormsg(f"API Error: {error_message}")
+                return None
+            
+            except urllib.error.URLError as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                inkex.errormsg(f"Connection Error: {str(e)}")
+                return None
+            
+            except Exception as e:
                 inkex.errormsg(f"Error: {str(e)}")
                 return None
         
