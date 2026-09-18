@@ -115,6 +115,9 @@ class AIImageGenerator(inkex.EffectExtension):
         'right_half': 'in the right half of the image'
     }
     
+    # Above this share of the canvas, naming a region misleads rather than helps
+    VENICE_MASK_HINT_MAX_COVERAGE = 0.6
+    
     # Aspect ratios accepted by every Venice model listed above
     VENICE_ASPECT_RATIOS = ('1:1', '3:2', '16:9', '21:9', '9:16', '2:3', '3:4', '4:5')
     
@@ -1331,7 +1334,11 @@ class AIImageGenerator(inkex.EffectExtension):
         return f"{instruction.rstrip().rstrip('.')}, {hint}"
     
     def describe_shapes_region(self, shapes):
-        """Describe where the selected shapes sit, as a position on a 3x3 grid."""
+        """Describe where the selected shapes sit, as a position on a 3x3 grid.
+        
+        Returns None when the selection covers most of the image, where naming a
+        region would point the model at the wrong place.
+        """
         try:
             boxes = [shape.bounding_box() for shape in shapes]
             boxes = [box for box in boxes if box]
@@ -1342,14 +1349,21 @@ class AIImageGenerator(inkex.EffectExtension):
             if not boxes or not width or not height:
                 return None
             
-            center_x = sum(box.center_x for box in boxes) / len(boxes)
-            center_y = sum(box.center_y for box in boxes) / len(boxes)
+            # Combined extent of the selection, not the average of its parts
+            left = min(box.left for box in boxes)
+            top = min(box.top for box in boxes)
+            right = max(box.right for box in boxes)
+            bottom = max(box.bottom for box in boxes)
+            
+            covered = ((right - left) * (bottom - top)) / (width * height)
+            if covered > self.VENICE_MASK_HINT_MAX_COVERAGE:
+                return None
             
             columns = ('left', 'centre', 'right')
             rows = ('top', 'middle', 'bottom')
             
-            column = columns[max(0, min(2, int(center_x / width * 3)))]
-            row = rows[max(0, min(2, int(center_y / height * 3)))]
+            column = columns[max(0, min(2, int((left + right) / 2 / width * 3)))]
+            row = rows[max(0, min(2, int((top + bottom) / 2 / height * 3)))]
             
             if column == 'centre' and row == 'middle':
                 return 'in the centre of the image'

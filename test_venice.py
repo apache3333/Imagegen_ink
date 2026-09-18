@@ -445,19 +445,46 @@ class TestVeniceEdit(VeniceTestCase):
         self.assertEqual(sent['data']['prompt'],
                          'add a dwarf sitting, in the centre of the image. Avoid: cartoon')
 
-    def test_shape_region_is_described_by_grid_position(self):
-        """Selected shapes get a position rather than a mask mode."""
+    @staticmethod
+    def _shape(left, top, right, bottom):
+        return SimpleNamespace(bounding_box=lambda: SimpleNamespace(
+            left=left, top=top, right=right, bottom=bottom))
+
+    def _shapes_ext(self, *shapes):
         ext = make_extension(model='firered-image-edit',
                              edit_instruction='add a lamp',
                              use_selection_as_mask=True)
         ext.svg = SimpleNamespace(viewport_width=1000, viewport_height=1000,
                                   selection=[])
-        shape = SimpleNamespace(
-            bounding_box=lambda: SimpleNamespace(center_x=100, center_y=900))
-        ext.get_selected_shapes_as_mask = lambda: [shape]
+        ext.get_selected_shapes_as_mask = lambda: list(shapes)
+        return ext
+
+    def test_shape_region_is_described_by_grid_position(self):
+        """Selected shapes get a position rather than a mask mode."""
+        ext = self._shapes_ext(self._shape(50, 800, 250, 1000))
 
         self.assertEqual(ext.add_venice_region_hint('add a lamp'),
                          'add a lamp, in the bottom left area of the image')
+
+    def test_centred_shape_reads_naturally(self):
+        ext = self._shapes_ext(self._shape(400, 400, 600, 600))
+
+        self.assertEqual(ext.add_venice_region_hint('add a lamp'),
+                         'add a lamp, in the centre of the image')
+
+    def test_shape_region_spans_all_selected_shapes(self):
+        """The combined extent decides, not the average of the parts."""
+        ext = self._shapes_ext(self._shape(700, 50, 800, 150),
+                               self._shape(850, 100, 950, 200))
+
+        self.assertEqual(ext.add_venice_region_hint('add a lamp'),
+                         'add a lamp, in the top right area of the image')
+
+    def test_no_hint_when_the_selection_covers_most_of_the_image(self):
+        """Naming a region would point the model at the wrong place."""
+        ext = self._shapes_ext(self._shape(20, 20, 980, 980))
+
+        self.assertEqual(ext.add_venice_region_hint('add a lamp'), 'add a lamp')
 
     def test_shape_region_falls_back_quietly(self):
         ext = make_extension(model='firered-image-edit', use_selection_as_mask=True)
