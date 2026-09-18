@@ -367,6 +367,15 @@ Generation and editing use **different models** on Venice, so the dropdown label
 `Venice generate: …` and `Venice edit/img2img: …`. Picking the wrong category — or a non-Venice
 model entirely — falls back to a sensible Venice default and says so, rather than failing.
 
+> **Which model actually ran?** The Model dropdown is shared by every provider and Inkscape
+> remembers your last selection, so a choice can carry over between runs unnoticed. Every operation
+> is logged to `ai_image_history.json` in the extension directory with the provider, model, size and
+> seed it used — useful when a result is not what you expected. Per-model limits differ a lot
+> (prompt length 1,500–32,768 characters; sampling steps 8–50), so the model in effect changes what
+> the extension accepts.
+
+
+
 **Masking works differently on Venice**
 
 Venice has **no mask channel** — its API rewrites the whole frame, and its documentation is
