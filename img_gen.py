@@ -205,6 +205,10 @@ class AIImageGenerator(inkex.EffectExtension):
         pars.add_argument("--use_selection_as_mask", type=inkex.Boolean, default=False,
             help="Use selected shapes as edit mask")
         
+        # Venice options
+        pars.add_argument("--hide_watermark", type=inkex.Boolean, default=True,
+            help="Ask Venice not to watermark generated images")
+        
         # Save options
         pars.add_argument("--save_to_disk", type=inkex.Boolean, default=True, help="Save to disk")
         pars.add_argument("--save_directory", type=str, default="", help="Save directory")
@@ -768,7 +772,8 @@ class AIImageGenerator(inkex.EffectExtension):
             'prompt': self.options.prompt,
             'format': 'png',
             'cfg_scale': self.options.cfg_scale,
-            'steps': self.get_venice_steps(model)
+            'steps': self.get_venice_steps(model),
+            'hide_watermark': self.options.hide_watermark
         }
         
         # Venice takes a real negative prompt, so no folding into the prompt text
@@ -1330,7 +1335,8 @@ class AIImageGenerator(inkex.EffectExtension):
             'Accept': 'image/png'
         }
         
-        # aspect_ratio is left out so Venice infers it from the input image
+        # aspect_ratio is left out so Venice infers it from the input image.
+        # hide_watermark exists only on /image/generate, so edits cannot suppress it.
         data = {
             'model': model,
             'prompt': prompt,

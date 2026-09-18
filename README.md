@@ -363,8 +363,9 @@ For Automatic1111 or ComfyUI:
 | `qwen-image-3-edit` | — | Edit and Img2Img |
 | `nano-banana-2-edit` | — | Edit and Img2Img, long prompts |
 
-Selecting a non-Venice model while Venice is the provider falls back to a Venice default
-and says so, rather than failing.
+Generation and editing use **different models** on Venice, so the dropdown labels them
+`Venice generate: …` and `Venice edit/img2img: …`. Picking the wrong category — or a non-Venice
+model entirely — falls back to a sensible Venice default and says so, rather than failing.
 
 **Masking works differently on Venice**
 
@@ -395,8 +396,13 @@ through, and the output size may differ from what was requested:
 Sampling steps and seeds are clamped to each model's accepted range, with a note when that
 happens. Negative prompts use Venice's real `negative_prompt` field when generating; the
 edit endpoint has no such field, so a negative prompt is appended to the instruction as
-`. Avoid: ...` instead. Venice's own defaults for watermarking and safe mode are left
-untouched.
+`. Avoid: ...` instead.
+
+**Watermarks.** Venice watermarks generated images by default. **Advanced → Hide Venice watermark**
+(on by default) sends `hide_watermark`, and Venice may still watermark some content at its
+discretion. This applies to **generation only** — `/image/edit` has no equivalent field, so images
+produced by Edit and Img2Img may carry a watermark regardless of the checkbox. Venice's `safe_mode`
+default is left untouched.
 
 ---
 

@@ -98,6 +98,7 @@ def make_extension(**overrides):
         'mask_mode': 'full',
         'use_selection_as_mask': False,
         'mask_feather': 0,
+        'hide_watermark': True,
         'use_proxy': False,
         'proxy_url': '',
     }
@@ -172,6 +173,20 @@ class TestVeniceGenerate(VeniceTestCase):
         ext.generate_venice()
 
         self.assertEqual(sent['data']['format'], 'png')
+
+    def test_hide_watermark_is_sent_on_generation(self):
+        ext = make_extension(hide_watermark=True)
+        sent = record_generate(ext)
+        ext.generate_venice()
+
+        self.assertIs(sent['data']['hide_watermark'], True)
+
+    def test_hide_watermark_can_be_turned_off(self):
+        ext = make_extension(hide_watermark=False)
+        sent = record_generate(ext)
+        ext.generate_venice()
+
+        self.assertIs(sent['data']['hide_watermark'], False)
 
     def test_bearer_auth_header(self):
         ext = make_extension()
@@ -308,6 +323,14 @@ class TestVeniceEdit(VeniceTestCase):
 
         self.assertIn('model', sent['data'])
         self.assertNotIn('modelId', sent['data'])
+
+    def test_hide_watermark_is_not_sent_on_edits(self):
+        """/image/edit has no hide_watermark field; sending it would be a 400."""
+        ext = make_extension(model='firered-image-edit', hide_watermark=True)
+        sent = record_edit(ext)
+        ext.edit_venice(png_bytes(1024, 1024))
+
+        self.assertNotIn('hide_watermark', sent['data'])
 
     def test_aspect_ratio_is_left_to_the_api(self):
         """Omitting aspect_ratio makes Venice infer it from the input image."""

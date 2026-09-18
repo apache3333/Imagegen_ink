@@ -84,15 +84,15 @@
                 <option value="stability-ai/sdxl">SDXL (Replicate)</option>
                 <option value="black-forest-labs/flux-schnell">Flux Schnell (Replicate)</option>
                 <option value="black-forest-labs/flux-pro">Flux Pro (Replicate)</option>
-                <option value="venice-sd35">Venice SD3.5 (Venice)</option>
-                <option value="z-image-turbo">Z-Image Turbo (Venice, fastest)</option>
-                <option value="qwen-image-3">Qwen Image 3 (Venice)</option>
-                <option value="flux-2-pro">Flux 2 Pro (Venice)</option>
-                <option value="nano-banana-2">Nano Banana 2 (Venice)</option>
-                <option value="seedream-v5-lite">Seedream v5 Lite (Venice)</option>
-                <option value="firered-image-edit">FireRed Edit (Venice, edit/img2img)</option>
-                <option value="qwen-image-3-edit">Qwen Image 3 Edit (Venice, edit/img2img)</option>
-                <option value="nano-banana-2-edit">Nano Banana 2 Edit (Venice, edit/img2img)</option>
+                <option value="venice-sd35">Venice generate: SD3.5</option>
+                <option value="z-image-turbo">Venice generate: Z-Image Turbo (fastest)</option>
+                <option value="qwen-image-3">Venice generate: Qwen Image 3</option>
+                <option value="flux-2-pro">Venice generate: Flux 2 Pro</option>
+                <option value="nano-banana-2">Venice generate: Nano Banana 2</option>
+                <option value="seedream-v5-lite">Venice generate: Seedream v5 Lite</option>
+                <option value="firered-image-edit">Venice edit/img2img: FireRed</option>
+                <option value="qwen-image-3-edit">Venice edit/img2img: Qwen Image 3</option>
+                <option value="nano-banana-2-edit">Venice edit/img2img: Nano Banana 2</option>
                 <option value="default">Default (Local)</option>
             </param>
             <spacer/>
@@ -148,6 +148,12 @@
             <label appearance="header">Image-to-Image:</label>
             <param name="img2img_strength" type="float" min="0.0" max="1.0" precision="2" gui-text="Transformation strength:">0.75</param>
             <label>0 = keep original, 1 = complete transformation</label>
+            <spacer/>
+            
+            <label appearance="header">Venice Options:</label>
+            <param name="hide_watermark" type="bool" gui-text="Hide Venice watermark">true</param>
+            <label>Generation only - Venice's edit endpoint has no such option,</label>
+            <label>and Venice may still watermark some content</label>
             <spacer/>
             
             <label appearance="header">History:</label>
@@ -269,6 +275,7 @@
             <label>• Sizes are mapped to what each model accepts (max 1280px, or</label>
             <label>  the nearest aspect ratio), so output size may differ</label>
             <label>• Custom endpoint does not apply - Venice uses its own URL</label>
+            <label>• "Hide Venice watermark" (Advanced tab) applies to Generate only</label>
             <spacer/>
             
             <label appearance="header">Pricing (approximate):</label>
